@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Photoswan - Silly Image Editor :sob:</title>
+  <title>Photoswan/g - Silly Image Editor</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -301,12 +301,9 @@
 
           <div class="ios-sep"></div>
 
-          <div class="ios-row col">
-            <div class="row-header">
-              <span class="row-label">Brush Size</span>
-              <span class="row-val" id="brushSizeVal">50</span>
-            </div>
-            <input type="range" id="brushSizeSlider" min="2" max="400" value="50" />
+          <div class="ios-row inline">
+            <span class="row-label">Brush Size</span>
+            <span class="row-val" id="brushSizeVal">50</span>
           </div>
 
           <div class="ios-sep"></div>
@@ -316,14 +313,24 @@
               <span class="row-label">Hardness</span>
               <span class="row-val" id="brushHardnessVal">50</span>
             </div>
-            <input type="range" id="brushHardnessSlider" min="0" max="100" value="50" />
+            <canvas class="hardness-preview" id="hardnessPreview" width="240" height="56"></canvas>
           </div>
 
         </div>
-        <div class="ios-group-footer">Paint to erase/reveal · Press X to switch color · Esc to finish</div>
+        <div class="ios-group-footer">Alt+drag right-click: up/down = size · left/right = hardness · X to swap color · Esc to finish</div>
       </div>
 
     </div><!-- /maskPanel -->
+  </div>
+
+  <!-- Brush adjust HUD -->
+  <div class="brush-hud" id="brushHud">
+    <div class="brush-hud-ring" id="brushHudRing"></div>
+    <div class="brush-hud-label">
+      <div class="brush-hud-size" id="brushHudSize">50</div>
+      <div class="brush-hud-hard" id="brushHudHard">Hardness 50%</div>
+    </div>
+    <div class="brush-hud-axis">↑ Size &nbsp;·&nbsp; <span>Hardness →</span></div>
   </div>
 
   <script src="app.js"></script>

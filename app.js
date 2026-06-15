@@ -57,10 +57,13 @@ const layerRotationVal    = $('layerRotationVal');
 
 const maskPanel          = $('maskPanel');
 const maskCloseBtn       = $('maskCloseBtn');
-const brushSizeSlider    = $('brushSizeSlider');
 const brushSizeVal       = $('brushSizeVal');
-const brushHardnessSlider= $('brushHardnessSlider');
 const brushHardnessVal   = $('brushHardnessVal');
+const hardnessPreview    = $('hardnessPreview');
+const brushHud           = $('brushHud');
+const brushHudRing       = $('brushHudRing');
+const brushHudSize       = $('brushHudSize');
+const brushHudHard       = $('brushHudHard');
 const brushCursor        = $('brushCursor');
 
 const signed = v => (v > 0 ? '+' : '') + v;
@@ -372,16 +375,18 @@ function ensureComposite() {
   }
 }
 
-/* Mask: an offscreen docW×docH canvas, fully opaque white = fully visible.
-   Painting "black" reduces alpha (erase); painting "white" restores it
-   (destination-over). Applied via destination-in onto the rendered layer. */
-function createMask(w, h) {
+/* Mask: stored in layer-LOCAL coordinates (layer.img.width x layer.img.height),
+   fully opaque white = fully visible. Painting "black" erases (destination-out);
+   painting "white" restores (destination-over).
+   Applied inside the layer's own transform so it always moves/scales/rotates
+   with the layer instead of being pinned to the document canvas. */
+function createMask(imgW, imgH) {
   const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
+  c.width  = imgW;
+  c.height = imgH;
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, w, h);
+  ctx.fillRect(0, 0, imgW, imgH);
   return c;
 }
 
@@ -398,14 +403,19 @@ function compositeLayers() {
     layerTempCtx.translate(layer.x, layer.y);
     layerTempCtx.rotate(layer.rotation * Math.PI / 180);
     layerTempCtx.scale(layer.scale, layer.scale);
-    layerTempCtx.drawImage(layer.img, -layer.img.width / 2, -layer.img.height / 2);
-    layerTempCtx.restore();
+
+    const hw = layer.img.width / 2;
+    const hh = layer.img.height / 2;
+    layerTempCtx.drawImage(layer.img, -hw, -hh);
 
     if (layer.mask) {
+      // Apply the mask in the same local-space transform so it sticks to the layer.
       layerTempCtx.globalCompositeOperation = 'destination-in';
-      layerTempCtx.drawImage(layer.mask, 0, 0);
+      layerTempCtx.drawImage(layer.mask, -hw, -hh);
       layerTempCtx.globalCompositeOperation = 'source-over';
     }
+
+    layerTempCtx.restore();
 
     compCtx.save();
     compCtx.globalAlpha = layer.opacity / 100;
@@ -533,7 +543,7 @@ function addLayer(img, name) {
     opacity: 100,
     blendMode: 'source-over',
     visible: true,
-    mask: createMask(state.docW, state.docH),
+    mask: createMask(img.width, img.height),
   };
   state.layers.unshift(layer);
   state.selectedLayerId = id;
@@ -840,6 +850,133 @@ previewWrap.addEventListener('wheel', e => {
   applyZoom();
 }, { passive: false });
 
+/* ─── Hardness preview canvas ─── */
+function drawHardnessPreview() {
+  if (!hardnessPreview) return;
+  const canvas = hardnessPreview;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const cx = w / 2, cy = h / 2;
+  const maxR = Math.min(cx, cy) - 2;
+  const hardness = state.brushHardness / 100;
+
+  // Radial gradient that mimics how Photoshop brush hardness looks:
+  // hardness=1 → sharp solid circle; hardness=0 → fully feathered blob
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
+  const hardStop = hardness * 0.98; // inner solid region
+  grad.addColorStop(0,         'rgba(255,255,255,1)');
+  grad.addColorStop(hardStop,  'rgba(255,255,255,1)');
+  grad.addColorStop(1,         'rgba(255,255,255,0)');
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, maxR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Thin circle outline at the hard edge
+  if (hardness > 0.02) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, maxR * hardStop, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+/* ─── Alt + right-click drag: brush size (vertical) & hardness (horizontal) ─── */
+let altDragActive   = false;
+let altDragAccumX   = 0;   // accumulated movementX since drag start
+let altDragAccumY   = 0;   // accumulated movementY since drag start
+let altDragOriginSize = 0;
+let altDragOriginHard = 0;
+// Screen position where the drag started — HUD ring stays pinned here
+let altDragScreenX  = 0;
+let altDragScreenY  = 0;
+
+function showBrushHud() {
+  brushHud.classList.add('active');
+  document.body.style.cursor = 'none';
+}
+function hideBrushHud() {
+  brushHud.classList.remove('active');
+  document.body.style.cursor = '';
+}
+
+function updateBrushHud() {
+  brushHudSize.textContent = state.brushSize;
+  brushHudHard.textContent = 'Hardness ' + state.brushHardness + '%';
+
+  // Size the HUD ring to match the brush size in screen pixels
+  const rect = canvasOrig.getBoundingClientRect();
+  if (rect.width && state.docW) {
+    const docScale = rect.width / state.docW;
+    const screenR = Math.max(4, state.brushSize * docScale * state.zoom);
+    brushHudRing.style.width  = screenR + 'px';
+    brushHudRing.style.height = screenR + 'px';
+  }
+
+  // HUD ring is pinned at the original click position
+  brushHudRing.style.left = altDragScreenX + 'px';
+  brushHudRing.style.top  = altDragScreenY + 'px';
+
+  // Hardness shown as radial gradient on the ring fill
+  const h = state.brushHardness / 100;
+  brushHudRing.style.background =
+    `radial-gradient(circle, rgba(255,255,255,${0.12 + h * 0.25}) ${Math.round(h * 88)}%, transparent 100%)`;
+}
+
+document.addEventListener('mousedown', e => {
+  if (e.button !== 2 || !e.altKey || !state.maskEditLayerId) return;
+  altDragActive     = true;
+  altDragAccumX     = 0;
+  altDragAccumY     = 0;
+  altDragOriginSize = state.brushSize;
+  altDragOriginHard = state.brushHardness;
+  altDragScreenX    = e.clientX;
+  altDragScreenY    = e.clientY;
+
+  // Lock pointer so mouse stays centered and we get unlimited movementX/Y
+  document.documentElement.requestPointerLock();
+  showBrushHud();
+  updateBrushHud();
+  e.preventDefault();
+});
+
+document.addEventListener('mousemove', e => {
+  if (!altDragActive) return;
+
+  // movementY → size (up = bigger, down = smaller)
+  // movementX → hardness (right = harder, left = softer)
+  altDragAccumX += e.movementX;
+  altDragAccumY += e.movementY;
+
+  // Size: exponential — each 200px of upward movement doubles the size
+  const sizeFactor = Math.pow(2, -altDragAccumY / 200);
+  state.brushSize = Math.max(2, Math.min(2000, Math.round(altDragOriginSize * sizeFactor)));
+
+  // Hardness: linear, 1% per 2px rightward
+  state.brushHardness = Math.max(0, Math.min(100, Math.round(altDragOriginHard + altDragAccumX / 2)));
+
+  brushSizeVal.textContent     = state.brushSize;
+  brushHardnessVal.textContent = state.brushHardness;
+  updateBrushHud();
+  drawHardnessPreview();
+});
+
+document.addEventListener('mouseup', e => {
+  if (e.button !== 2 || !altDragActive) return;
+  altDragActive = false;
+  if (document.pointerLockElement) document.exitPointerLock();
+  hideBrushHud();
+});
+
+// Suppress context menu when alt is held
+previewWrap.addEventListener('contextmenu', e => {
+  if (e.altKey || altDragActive) e.preventDefault();
+});
+
 /* ─── Split divider ─── */
 function updateDividerPos() {
   if (!state.docW) return;
@@ -902,20 +1039,37 @@ function screenToDoc(clientX, clientY) {
   return [fx * state.docW, fy * state.docH];
 }
 
+// Convert a doc-space point into a layer's local coordinate space
+// (inverts the layer's translate -> rotate -> scale transform).
+function docToLayerLocal(layer, docX, docY) {
+  const dx = docX - layer.x;
+  const dy = docY - layer.y;
+  const rad = -(layer.rotation * Math.PI / 180);
+  const cosA = Math.cos(rad), sinA = Math.sin(rad);
+  const rx = dx * cosA - dy * sinA;
+  const ry = dx * sinA + dy * cosA;
+  const lx = rx / layer.scale + layer.img.width  / 2;
+  const ly = ry / layer.scale + layer.img.height / 2;
+  return [lx, ly];
+}
+
 previewWrap.addEventListener('mousedown', e => {
   if (splitDiv.contains(e.target)) return;
 
   if (state.maskEditLayerId) {
+    // Only left-click paints; right-click is reserved for alt+drag brush adjust
+    if (e.button !== 0) return;
     const layer = getMaskLayer();
     if (!layer) return;
     maskPainting = true;
-    maskLastPoint = screenToDoc(e.clientX, e.clientY);
+    maskLastPoint = docToLayerLocal(layer, ...screenToDoc(e.clientX, e.clientY));
     paintMaskAt(layer, maskLastPoint[0], maskLastPoint[1]);
     scheduleRender(true);
     e.preventDefault();
     return;
   }
 
+  if (e.button !== 0) return;
   const layer = getSelectedLayer();
   if (!layer) return;
   layerDragging = true;
@@ -927,7 +1081,7 @@ document.addEventListener('mousemove', e => {
   if (maskPainting) {
     const layer = getMaskLayer();
     if (!layer) return;
-    const pt = screenToDoc(e.clientX, e.clientY);
+    const pt = docToLayerLocal(layer, ...screenToDoc(e.clientX, e.clientY));
     paintMaskStroke(layer, maskLastPoint[0], maskLastPoint[1], pt[0], pt[1]);
     maskLastPoint = pt;
     scheduleRender(true);
@@ -941,7 +1095,9 @@ document.addEventListener('mousemove', e => {
   layer.y = layerDragOrigin.y + dy;
   scheduleRender(true);
 });
-document.addEventListener('mouseup', () => { layerDragging = false; maskPainting = false; });
+document.addEventListener('mouseup', e => {
+  if (e.button === 0) { layerDragging = false; maskPainting = false; }
+});
 
 previewWrap.addEventListener('touchstart', e => {
   if (splitDiv.contains(e.target)) return;
@@ -951,7 +1107,7 @@ previewWrap.addEventListener('touchstart', e => {
     const layer = getMaskLayer();
     if (!layer) return;
     maskPainting = true;
-    maskLastPoint = screenToDoc(t.clientX, t.clientY);
+    maskLastPoint = docToLayerLocal(layer, ...screenToDoc(t.clientX, t.clientY));
     paintMaskAt(layer, maskLastPoint[0], maskLastPoint[1]);
     scheduleRender(true);
     return;
@@ -968,7 +1124,7 @@ document.addEventListener('touchmove', e => {
   if (maskPainting) {
     const layer = getMaskLayer();
     if (!layer) return;
-    const pt = screenToDoc(t.clientX, t.clientY);
+    const pt = docToLayerLocal(layer, ...screenToDoc(t.clientX, t.clientY));
     paintMaskStroke(layer, maskLastPoint[0], maskLastPoint[1], pt[0], pt[1]);
     maskLastPoint = pt;
     scheduleRender(true);
@@ -1005,18 +1161,20 @@ function toggleMaskEdit(id) {
 }
 
 function updateMaskPanel() {
-  brushSizeSlider.value = state.brushSize;
   brushSizeVal.textContent = state.brushSize;
-  brushHardnessSlider.value = state.brushHardness;
   brushHardnessVal.textContent = state.brushHardness;
   document.querySelectorAll('.mask-color-swatch').forEach(sw => {
     sw.classList.toggle('active', sw.dataset.color === state.maskColor);
   });
+  drawHardnessPreview();
 }
 
 function paintMaskAt(layer, x, y) {
+  // x, y are in layer-local pixel space.
+  // Brush size is in doc-space pixels; divide by scale to get local-space radius.
   const ctx = layer.mask.getContext('2d');
-  const r = Math.max(0.5, state.brushSize / 2);
+  const localBrushSize = state.brushSize / layer.scale;
+  const r = Math.max(0.5, localBrushSize / 2);
   const hardness = Math.min(0.999, state.brushHardness / 100);
   const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
   if (state.maskColor === 'black') {
@@ -1049,10 +1207,13 @@ function paintMaskStroke(layer, x0, y0, x1, y1) {
 
 function updateBrushCursor(clientX, clientY) {
   if (!state.maskEditLayerId) { brushCursor.style.display = 'none'; return; }
+  const layer = getMaskLayer();
   const rect = canvasOrig.getBoundingClientRect();
   const wrapRect = previewWrap.getBoundingClientRect();
-  const scale = rect.width / state.docW;
-  const size = Math.max(2, state.brushSize * scale);
+  // Convert brush size (doc-space) to screen pixels for the cursor ring.
+  // The canvas is displayed at rect.width / state.docW scale, then zoom is baked in.
+  const docScale = rect.width / state.docW;
+  const size = Math.max(2, state.brushSize * docScale * state.zoom);
   brushCursor.style.width  = size + 'px';
   brushCursor.style.height = size + 'px';
   brushCursor.style.left = (clientX - wrapRect.left) + 'px';
@@ -1082,14 +1243,7 @@ document.querySelectorAll('.mask-color-swatch').forEach(sw => {
     updateMaskPanel();
   });
 });
-brushSizeSlider.addEventListener('input', () => {
-  state.brushSize = +brushSizeSlider.value;
-  brushSizeVal.textContent = state.brushSize;
-});
-brushHardnessSlider.addEventListener('input', () => {
-  state.brushHardness = +brushHardnessSlider.value;
-  brushHardnessVal.textContent = state.brushHardness;
-});
+
 
 /* ─── Panel drag ─── */
 function makePanelDraggable(panelEl, handleEl) {
