@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Image Processor</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Full-bleed canvas -->
+  <div class="stage" id="stage">
+
+    <!-- Drop zone -->
+    <div class="drop-zone" id="dropZone">
+      <div class="drop-inner" id="dropInner">
+        <div class="drop-icon">
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="4" y="10" width="32" height="22" rx="3" stroke="#48484a" stroke-width="1.5"/>
+            <circle cx="14" cy="18" r="3" stroke="#48484a" stroke-width="1.5"/>
+            <path d="M4 26l8-6 6 5 5-4 9 7" stroke="#48484a" stroke-width="1.5" stroke-linejoin="round"/>
+            <path d="M20 5v10M16 9l4-4 4 4" stroke="#48484a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <p class="drop-title">Drop image here</p>
+        <p class="drop-sub">or <label for="fileInput" class="file-link">choose file</label> · paste with Ctrl+V</p>
+        <p class="drop-formats">WEBP &nbsp;·&nbsp; JPG &nbsp;·&nbsp; PNG</p>
+        <input type="file" id="fileInput" accept="image/webp,image/jpeg,image/png" />
+      </div>
+
+      <!-- Split preview -->
+      <div class="preview-wrap" id="previewWrap" style="display:none">
+        <canvas id="canvasOriginal"></canvas>
+        <canvas id="canvasProcessed"></canvas>
+        <div class="split-divider" id="splitDivider">
+          <div class="split-line"></div>
+          <div class="split-knob">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M5 4l-3 4 3 4M11 4l3 4-3 4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+        <div class="preview-labels">
+          <span class="lbl-orig">Original</span>
+          <span class="lbl-proc">Processed</span>
+        </div>
+        <div class="zoom-badge" id="zoomBadge">100%</div>
+        <div class="brush-cursor" id="brushCursor"></div>
+      </div>
+    </div>
+
+    <!-- Floating panel: Layers -->
+    <div class="panel panel-left" id="layersPanel">
+
+      <div class="panel-handle" id="layersPanelHandle"></div>
+
+      <div class="ios-group">
+        <div class="ios-group-label-row">
+          <div class="ios-group-label">Layers</div>
+          <button class="icon-btn" id="addLayerBtn" title="Add layer">
+            <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
+              <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <input type="file" id="layerFileInput" accept="image/webp,image/jpeg,image/png" style="display:none" />
+        </div>
+        <div class="ios-card layer-list" id="layerList">
+          <div class="layer-empty" id="layerEmpty">No layers yet — drop or paste an image</div>
+        </div>
+      </div>
+
+      <div class="ios-group" id="layerTransformGroup" style="display:none">
+        <div class="ios-group-label">Transform</div>
+        <div class="ios-card">
+
+          <div class="ios-row col">
+            <div class="row-header">
+              <span class="row-label">Blend Mode</span>
+            </div>
+            <select id="layerBlendSelect" class="ios-select">
+              <option value="source-over">Normal</option>
+              <option value="multiply">Multiply</option>
+              <option value="screen">Screen</option>
+              <option value="overlay">Overlay</option>
+              <option value="darken">Darken</option>
+              <option value="lighten">Lighten</option>
+              <option value="color-dodge">Color Dodge</option>
+              <option value="color-burn">Color Burn</option>
+              <option value="hard-light">Hard Light</option>
+              <option value="soft-light">Soft Light</option>
+              <option value="difference">Difference</option>
+              <option value="exclusion">Exclusion</option>
+              <option value="hue">Hue</option>
+              <option value="saturation">Saturation</option>
+              <option value="color">Color</option>
+              <option value="luminosity">Luminosity</option>
+            </select>
+          </div>
+
+          <div class="ios-sep"></div>
+
+          <div class="ios-row col">
+            <div class="row-header">
+              <span class="row-label">Opacity</span>
+              <span class="row-val" id="layerOpacityVal">100</span>
+            </div>
+            <input type="range" id="layerOpacitySlider" min="0" max="100" value="100" />
+          </div>
+
+          <div class="ios-sep"></div>
+
+          <div class="ios-row col">
+            <div class="row-header">
+              <span class="row-label">Scale</span>
+              <span class="row-val" id="layerScaleVal">100%</span>
+            </div>
+            <input type="range" id="layerScaleSlider" min="10" max="300" value="100" />
+          </div>
+
+          <div class="ios-sep"></div>
+
+          <div class="ios-row col">
+            <div class="row-header">
+              <span class="row-label">Rotation</span>
+              <span class="row-val signed" id="layerRotationVal">0°</span>
+            </div>
+            <input type="range" id="layerRotationSlider" min="-180" max="180" value="0" />
+          </div>
+
+        </div>
+        <div class="ios-group-footer layer-hint">Drag on the image to reposition this layer</div>
+      </div>
+
+    </div><!-- /layersPanel -->
+
+    <!-- Floating panel: Effects -->
+    <div class="panel" id="panel">
+
+      <!-- Panel drag handle -->
+      <div class="panel-handle" id="panelHandle"></div>
+
+      <!-- SECTION: Threshold -->
+      <div class="ios-group">
+        <div class="ios-group-label">Threshold</div>
+        <div class="ios-card">
+
+          <!-- Mode segment -->
+          <div class="ios-row no-border">
+            <div class="seg-ctrl" id="segCtrl">
+              <button class="seg-btn active" data-mode="none">Off</button>
+              <button class="seg-btn" data-mode="threshold">Threshold</button>
+              <button class="seg-btn" data-mode="bw">B&amp;W</button>
+            </div>
+          </div>
+
+          <div class="ios-sep"></div>
+
+          <!-- Level slider -->
+          <div class="ios-row col" id="thresholdRow">
+            <div class="row-header">
+              <span class="row-label">Level</span>
+              <span class="row-val" id="thresholdVal">128</span>
+            </div>
+            <input type="range" id="thresholdSlider" min="0" max="255" value="128" />
+          </div>
+
+          <div class="ios-sep" id="thresholdSepA"></div>
+
+          <!-- Softness -->
+          <div class="ios-row col" id="thresholdSoftRow">
+            <div class="row-header">
+              <span class="row-label">Softness</span>
+              <span class="row-val" id="thresholdSoftVal">0</span>
+            </div>
+            <input type="range" id="thresholdSoftSlider" min="0" max="64" value="0" />
+          </div>
+
+          <div class="ios-sep" id="thresholdSepB"></div>
+
+          <!-- Invert toggle -->
+          <div class="ios-row inline" id="invertRow">
+            <span class="row-label">Invert</span>
+            <label class="ios-toggle">
+              <input type="checkbox" id="invertCheck" />
+              <span class="ios-toggle-track"></span>
+            </label>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- SECTION: Channel Mix -->
+      <div class="ios-group" id="channelGroup">
+        <div class="ios-group-label">Channel Mix <span class="group-sub">Luminance weights</span></div>
+        <div class="ios-card">
+
+          <div class="ios-row col">
+            <div class="row-header">
+              <span class="row-label ch-r">Red</span>
+              <span class="row-val" id="chRedVal">30</span>
+            </div>
+            <input type="range" id="chRedSlider" min="0" max="100" value="30" class="rng-red" />
+          </div>
+
+          <div class="ios-sep"></div>
+
+          <div class="ios-row col">
+            <div class="row-header">
+              <span class="row-label ch-g">Green</span>
+              <span class="row-val" id="chGreenVal">59</span>
+            </div>
+            <input type="range" id="chGreenSlider" min="0" max="100" value="59" class="rng-green" />
+          </div>
+
+          <div class="ios-sep"></div>
+
+          <div class="ios-row col">
+            <div class="row-header">
+              <span class="row-label ch-b">Blue</span>
+              <span class="row-val" id="chBlueVal">11</span>
+            </div>
+            <input type="range" id="chBlueSlider" min="0" max="100" value="11" class="rng-blue" />
+          </div>
+
+        </div>
+        <div class="ios-group-footer" id="channelFooter" style="display:none">
+          Weights sum to <span id="channelSum">100</span> — normalized on render
+        </div>
+      </div>
+
+      <!-- SECTION: Color -->
+      <div class="ios-group">
+        <div class="ios-group-label">Color</div>
+        <div class="ios-card">
+
+          <div class="ios-row col">
+            <div class="row-header">
+              <span class="row-label">Vibrance</span>
+              <span class="row-val signed" id="vibranceVal">0</span>
+            </div>
+            <input type="range" id="vibranceSlider" min="-100" max="100" value="0" />
+          </div>
+
+          <div class="ios-sep"></div>
+
+          <div class="ios-row col">
+            <div class="row-header">
+              <span class="row-label">Saturation</span>
+              <span class="row-val signed" id="saturationVal">0</span>
+            </div>
+            <input type="range" id="saturationSlider" min="-100" max="100" value="0" />
+          </div>
+
+          <div class="ios-sep"></div>
+
+          <div class="ios-row col">
+            <div class="row-header">
+              <span class="row-label">Sharpen</span>
+              <span class="row-val signed" id="sharpenVal">0</span>
+            </div>
+            <input type="range" id="sharpenSlider" min="-100" max="100" value="0" />
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="ios-group">
+        <div class="ios-card">
+          <button class="ios-action-btn export-btn" id="exportBtn" disabled>Export PNG</button>
+          <div class="ios-sep"></div>
+          <button class="ios-action-btn reset-btn" id="resetBtn">Reset All</button>
+        </div>
+      </div>
+
+    </div><!-- /panel -->
+
+    <!-- Floating panel: Mask Brush (shown while editing a layer mask) -->
+    <div class="panel mask-panel" id="maskPanel" style="display:none">
+
+      <div class="panel-handle" id="maskPanelHandle"></div>
+
+      <div class="ios-group">
+        <div class="ios-group-label-row">
+          <div class="ios-group-label">Mask Brush</div>
+          <button class="icon-btn" id="maskCloseBtn" title="Done (Esc)">
+            <svg viewBox="0 0 16 16" fill="none" width="11" height="11">
+              <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+        <div class="ios-card">
+
+          <div class="ios-row inline">
+            <span class="row-label">Color</span>
+            <div class="mask-color-toggle">
+              <button class="mask-color-swatch black active" data-color="black" title="Erase (black)"></button>
+              <button class="mask-color-swatch white" data-color="white" title="Restore (white)"></button>
+            </div>
+          </div>
+
+          <div class="ios-sep"></div>
+
+          <div class="ios-row col">
+            <div class="row-header">
+              <span class="row-label">Brush Size</span>
+              <span class="row-val" id="brushSizeVal">50</span>
+            </div>
+            <input type="range" id="brushSizeSlider" min="2" max="400" value="50" />
+          </div>
+
+          <div class="ios-sep"></div>
+
+          <div class="ios-row col">
+            <div class="row-header">
+              <span class="row-label">Hardness</span>
+              <span class="row-val" id="brushHardnessVal">50</span>
+            </div>
+            <input type="range" id="brushHardnessSlider" min="0" max="100" value="50" />
+          </div>
+
+        </div>
+        <div class="ios-group-footer">Paint to erase/reveal · Press X to switch color · Esc to finish</div>
+      </div>
+
+    </div><!-- /maskPanel -->
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
